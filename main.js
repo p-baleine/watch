@@ -65,33 +65,44 @@ exports.watchTree = function ( root, options, callback ) {
   walk(root, options, function (err, files) {
     if (err) throw err;
     var fileWatcher = function (f) {
-      fs.watchFile(f, options, function (c, p) {
-        // Check if anything actually changed in stat
-        if (files[f] && !files[f].isDirectory() && c.nlink !== 0 && files[f].mtime.getTime() == c.mtime.getTime()) return;
-        files[f] = c;
-        if (!files[f].isDirectory()) callback(f, c, p);
-        else {
-          fs.readdir(f, function (err, nfiles) {
-            if (err) return;
-            nfiles.forEach(function (b) {
-              var file = path.join(f, b);
-              if (!files[file]) {
-                fs.stat(file, function (err, stat) {
-                  callback(file, stat, null);
-                  files[file] = stat;
-                  fileWatcher(file);
-                })
+      try {
+        fs.watch(f, options, function() {
+          fs.stat(f, function(err, c) {
+            var p = sys._extend({}, files[f]);
+            if (err && err.code === 'ENOENT') {
+              // unwatch removed files.
+              delete files[f];
+              callback(f, null, p);
+            } else {
+              files[f] = c;
+              // console.log(c);
+              if (!files[f].isDirectory()) callback(f, c, p);
+              else {
+                fs.readdir(f, function (err, nfiles) {
+                  if (err) return;
+                  nfiles.forEach(function (b) {
+                    var file = path.join(f, b);
+                    if (!files[file]) {
+                      fs.stat(file, function (err, stat) {
+                        callback(file, stat, null);
+                        files[file] = stat;
+                        fileWatcher(file);
+                      });
+                    }
+                  });
+                });
               }
-            })
-          })
-        }
-        if (c.nlink === 0) {
+            }
+          });
+        });
+      } catch (e) {
+        if (err && err.code === 'ENOENT') {
           // unwatch removed files.
-          delete files[f]
-          fs.unwatchFile(f);
+          delete files[f];
+          callback(f, null, p);
         }
-      })
-    }
+      }
+    };
     fileWatcher(root);
     for (var i in files) {
       fileWatcher(i);
@@ -111,7 +122,7 @@ exports.createMonitor = function (root, options, cb) {
     if (prev === null) {
       return monitor.emit("created", f, curr);
     }
-    if (curr.nlink === 0) {
+    if (curr === null) {
       return monitor.emit("removed", f, curr);
     }
     monitor.emit("changed", f, curr, prev);
